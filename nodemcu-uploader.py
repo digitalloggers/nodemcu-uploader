@@ -90,8 +90,9 @@ class Uploader:
         self.writeln(output)
         return self.expect()
 
-    def __init__(self, port = 0, baud = BAUD):
+    def __init__(self, port = 0, baud = BAUD, fail_on_error = False):
         self._port = serial.Serial(port, Uploader.BAUD, timeout=Uploader.TIMEOUT)
+        self.fail_on_error = fail_on_error
 
         # Keeps things working, if following conections are made:
         ## RTS = CH_PD (i.e reset)
@@ -172,11 +173,15 @@ class Uploader:
         r = self.expect('C> ')
         if not r.endswith('C> '):
             log.error('Error waiting for esp "%s"' % r)
+            if self.fail_on_error:
+                raise Exception('Failed to write file')
             return
         log.debug('sending destination filename "%s"', destination)
         self.write(destination + '\x00', True)
         if not self.got_ack():
             log.error('did not ack destination filename')
+            if self.fail_on_error:
+                raise Exception('Failed to write file')
             return
 
         f = open( path, 'rt' ); content = f.read(); f.close()
@@ -193,6 +198,8 @@ class Uploader:
             if not self.write_chunk(data):
                 d = self.expect()
                 log.error('Bad chunk response "%s" %s' % (d, ':'.join(x.encode('hex') for x in d)))
+                if self.fail_on_error:
+                    raise Exception('Failed to write file')
                 return
 
             pos += chunk_size
@@ -206,6 +213,8 @@ class Uploader:
             data = self.download_file(destination)
             if content != data:
                 log.error('Verification failed.')
+                if self.fail_on_error:
+                    raise Exception('Failed to verify written file')
 
     def exec_file(self, path):
         filename = os.path.basename(path)
@@ -271,6 +280,8 @@ class Uploader:
         r = self.exchange('file.format()')
         if 'format done' not in r:
             log.error(r)
+            if self.fail_on_error:
+                raise Exception('Failed to format')
         else:
             log.info(r)
         return r
@@ -292,6 +303,8 @@ class Uploader:
         cmd = 'node.compile("%s")' % path
         r = self.exchange(cmd)
         log.info(r)
+        if r != '':
+            raise Exception('Failed to format')
         return r
     
     def file_remove(self, path):
@@ -299,6 +312,8 @@ class Uploader:
         cmd = 'file.remove("%s")' % path
         r = self.exchange(cmd)
         log.info(r)
+        if r != '':
+            raise Exception('Failed to format')
         return r
 
     def terminal(self):
@@ -323,6 +338,12 @@ if __name__ == '__main__':
     parser.add_argument(
             '--verbose',
             help = 'verbose output',
+            action = 'store_true',
+            default = False)
+
+    parser.add_argument(
+            '--fail_on_error',
+            help = 'fail if an error is detected',
             action = 'store_true',
             default = False)
 
@@ -437,7 +458,7 @@ if __name__ == '__main__':
     if args.verbose:
         log.setLevel(logging.DEBUG)
 
-    uploader = Uploader(args.port, args.baud)
+    uploader = Uploader(args.port, args.baud, args.fail_on_error)
 
     if args.operation == 'upload' or args.operation == 'download':
         sources = args.filename
